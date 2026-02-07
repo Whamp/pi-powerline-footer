@@ -180,13 +180,22 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     initVibeManager(ctx);
     
     if (enabled && ctx.hasUI) {
-      setupCustomEditor(ctx);
-      // quietStartup: true → compact header, otherwise → full overlay
-      if (isQuietStartup()) {
-        setupWelcomeHeader(ctx);
-      } else {
-        setupWelcomeOverlay(ctx);
-      }
+      // Defer custom editor setup until after pi-core's setupAutocomplete() completes.
+      // The session_start handler returns a promise that pi-core awaits, then runs
+      // setupAutocomplete() synchronously. We use setImmediate to schedule our setup
+      // after the current execution context (including setupAutocomplete) completes.
+      // Chain two setImmediate calls to ensure we're after all synchronous follow-up work.
+      setImmediate(() => {
+        setImmediate(() => {
+          setupCustomEditor(ctx);
+          // quietStartup: true → compact header, otherwise → full overlay
+          if (isQuietStartup()) {
+            setupWelcomeHeader(ctx);
+          } else {
+            setupWelcomeOverlay(ctx);
+          }
+        });
+      });
     }
   });
 
