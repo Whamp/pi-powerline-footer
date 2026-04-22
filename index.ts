@@ -22,6 +22,7 @@ import {
 } from "./bash-mode/completion.ts";
 import { BashModeEditor } from "./bash-mode/editor.ts";
 import { ManagedShellSession } from "./bash-mode/shell-session.ts";
+import { renderTranscriptCommandHeader, renderTranscriptLine } from "./bash-mode/transcript-render.ts";
 import { matchHistoryEntries, readGlobalShellHistory, readProjectHistory, appendProjectHistory } from "./bash-mode/history.ts";
 import type { BashModeSettings } from "./bash-mode/types.ts";
 import { getPreset, PRESETS } from "./presets.js";
@@ -78,6 +79,7 @@ const DEFAULT_SHORTCUTS: PowerlineShortcuts = {
   cutEditor: "ctrl+alt+x",
 };
 const DEFAULT_BASH_MODE_SETTINGS: BashModeSettings = {
+  enabled: true,
   toggleShortcut: "ctrl+shift+b",
   transcriptMaxLines: 2000,
   transcriptMaxBytes: 512 * 1024,
@@ -639,6 +641,7 @@ function resolveShortcutConfig(settings: Record<string, unknown>): PowerlineShor
 function parseBashModeSettings(settings: Record<string, unknown>): BashModeSettings {
   const raw = isRecord(settings.bashMode) ? settings.bashMode : {};
 
+  const enabled = raw.enabled !== false;
   const toggleShortcut = parseShortcutOverride(raw.toggleShortcut) ?? DEFAULT_BASH_MODE_SETTINGS.toggleShortcut;
   const transcriptMaxLines = typeof raw.transcriptMaxLines === "number" && Number.isFinite(raw.transcriptMaxLines)
     ? Math.max(100, Math.floor(raw.transcriptMaxLines))
@@ -648,6 +651,7 @@ function parseBashModeSettings(settings: Record<string, unknown>): BashModeSetti
     : DEFAULT_BASH_MODE_SETTINGS.transcriptMaxBytes;
 
   return {
+    enabled,
     toggleShortcut,
     transcriptMaxLines,
     transcriptMaxBytes,
@@ -834,6 +838,10 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   };
 
   const setBashModeActive = async (value: boolean, ctx: any): Promise<void> => {
+    if (!bashModeSettings.enabled) {
+      ctx.ui.notify("Powerline bash mode is disabled in settings", "info");
+      return;
+    }
     if (value === bashModeActive) return;
     if (!value && shellSession?.state.running) {
       ctx.ui.notify("Wait for the current shell command to finish before leaving bash mode", "warning");
@@ -1334,55 +1342,57 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("bash-mode", {
-    description: "Toggle sticky bash mode (on, off, toggle)",
-    handler: async (args, ctx) => {
-      const mode = args?.trim().toLowerCase() || "toggle";
-      if (mode === "on") {
-        await setBashModeActive(true, ctx);
-        return;
-      }
-      if (mode === "off") {
-        await setBashModeActive(false, ctx);
-        return;
-      }
-      if (mode === "toggle") {
-        await setBashModeActive(!bashModeActive, ctx);
-        return;
-      }
-      ctx.ui.notify("Usage: /bash-mode [on|off|toggle]", "warning");
-    },
-  });
-
-  pi.registerCommand("bash-reset", {
-    description: "Reset the managed bash session",
-    handler: async (_args, ctx) => {
-      shellSession?.dispose();
-      shellSession = null;
-      bashTranscript.clear();
-      if (bashModeActive) {
-        try {
-          await ensureShellSession();
-        } catch (error) {
-          bashModeActive = false;
-          const message = error instanceof Error ? error.message : String(error);
-          ctx.ui.notify(`Failed to restart shell session: ${message}`, "error");
-          requestRender();
+  if (bashModeSettings.enabled) {
+    pi.registerCommand("bash-mode", {
+      description: "Toggle sticky bash mode (on, off, toggle)",
+      handler: async (args, ctx) => {
+        const mode = args?.trim().toLowerCase() || "toggle";
+        if (mode === "on") {
+          await setBashModeActive(true, ctx);
           return;
         }
-      }
-      requestRender();
-      ctx.ui.notify("Bash session reset", "info");
-    },
-  });
+        if (mode === "off") {
+          await setBashModeActive(false, ctx);
+          return;
+        }
+        if (mode === "toggle") {
+          await setBashModeActive(!bashModeActive, ctx);
+          return;
+        }
+        ctx.ui.notify("Usage: /bash-mode [on|off|toggle]", "warning");
+      },
+    });
 
-  pi.registerShortcut(bashModeSettings.toggleShortcut, {
-    description: "Toggle bash mode",
-    handler: async (ctx) => {
-      if (!enabled || !ctx.hasUI) return;
-      await setBashModeActive(!bashModeActive, ctx);
-    },
-  });
+    pi.registerCommand("bash-reset", {
+      description: "Reset the managed bash session",
+      handler: async (_args, ctx) => {
+        shellSession?.dispose();
+        shellSession = null;
+        bashTranscript.clear();
+        if (bashModeActive) {
+          try {
+            await ensureShellSession();
+          } catch (error) {
+            bashModeActive = false;
+            const message = error instanceof Error ? error.message : String(error);
+            ctx.ui.notify(`Failed to restart shell session: ${message}`, "error");
+            requestRender();
+            return;
+          }
+        }
+        requestRender();
+        ctx.ui.notify("Bash session reset", "info");
+      },
+    });
+
+    pi.registerShortcut(bashModeSettings.toggleShortcut, {
+      description: "Toggle bash mode",
+      handler: async (ctx) => {
+        if (!enabled || !ctx.hasUI) return;
+        await setBashModeActive(!bashModeActive, ctx);
+      },
+    });
+  }
 
   pi.registerShortcut("alt+s", {
     description: "Stash/restore editor text",
@@ -1691,6 +1701,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     const editorFactory = (tui: any, editorTheme: any, keybindings: any) => {
       const editor = new BashModeEditor(tui, editorTheme, keybindings, {
         keybindings,
+        isBashModeEnabled: () => bashModeSettings.enabled,
         isBashModeActive: () => bashModeActive,
         isShellRunning: () => shellSession?.state.running ?? false,
         onExitBashMode: () => {
@@ -1734,6 +1745,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
       };
 
       const attachAutocompleteProvider = (): boolean => {
+        if (!bashModeSettings.enabled) return true;
         if (editor.hasWrappedProvider()) return true;
         const defaultProvider = getInstalledAutocompleteProvider();
         if (!defaultProvider) return false;
@@ -1863,7 +1875,10 @@ export default function powerlineFooter(pi: ExtensionAPI) {
 
           const lines: string[] = [];
           if (snapshot.truncatedCommands > 0) {
-            lines.push(` ${ctx.ui.theme.fg("dim", `… ${snapshot.truncatedCommands} earlier command${snapshot.truncatedCommands === 1 ? "" : "s"} truncated`)}`);
+            lines.push(renderTranscriptLine(
+              width,
+              ` ${ctx.ui.theme.fg("dim", `… ${snapshot.truncatedCommands} earlier command${snapshot.truncatedCommands === 1 ? "" : "s"} truncated`)}`,
+            ));
           }
 
           const recentCommands = snapshot.commands.slice(-4);
@@ -1874,12 +1889,16 @@ export default function powerlineFooter(pi: ExtensionAPI) {
               : command.exitCode === 0
                 ? ctx.ui.theme.fg("success", "ok")
                 : ctx.ui.theme.fg("error", `exit ${command.exitCode}`);
-            const commandLine = truncateToWidth(command.command.replace(/\s+/g, " ").trim(), Math.max(8, width - 8), "…");
-            lines.push(` ${ctx.ui.theme.fg("accent", promptGlyph)} ${commandLine} ${ctx.ui.theme.fg("dim", "(")}${status}${ctx.ui.theme.fg("dim", ")")}`);
+            const promptPrefix = ` ${ctx.ui.theme.fg("accent", promptGlyph)} `;
+            const statusSuffix = ` ${ctx.ui.theme.fg("dim", "(")}${status}${ctx.ui.theme.fg("dim", ")")}`;
+            lines.push(renderTranscriptCommandHeader(width, promptPrefix, command.command, statusSuffix));
 
             const outputTail = command.output.slice(-6);
             for (const outputLine of outputTail) {
-              lines.push(`   ${truncateToWidth(outputLine, Math.max(1, width - 3), "…")}`);
+              lines.push(renderTranscriptLine(
+                width,
+                `   ${truncateToWidth(outputLine, Math.max(1, width - 3), "…")}`,
+              ));
             }
           }
 

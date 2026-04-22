@@ -1,4 +1,5 @@
 export interface BashModeSettings {
+  enabled: boolean;
   toggleShortcut: string;
   transcriptMaxLines: number;
   transcriptMaxBytes: number;

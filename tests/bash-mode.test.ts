@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { appendProjectHistory, matchHistoryEntries, readGlobalShellHistory } from "../bash-mode/history.ts";
 import { BashTranscriptStore } from "../bash-mode/transcript.ts";
 import {
@@ -23,36 +25,67 @@ function getMethod(target: object, name: string): Function {
   return method;
 }
 
+function getInstalledPiCodingAgentDistUrl(pathFromDist: string): string {
+  const globalNodeModules = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+  return pathToFileURL(join(globalNodeModules, "@mariozechner", "pi-coding-agent", "dist", pathFromDist)).href;
+}
+
 function ensureEditorModuleLinks(): { cleanup: () => void } {
   const nodeModulesDir = join(process.cwd(), "node_modules", "@mariozechner");
+  const globalNodeModules = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
   mkdirSync(nodeModulesDir, { recursive: true });
   const links = [
     {
       link: join(nodeModulesDir, "pi-coding-agent"),
-      target: "/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent",
+      target: join(globalNodeModules, "@mariozechner", "pi-coding-agent"),
     },
     {
       link: join(nodeModulesDir, "pi-tui"),
-      target: "/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/node_modules/@mariozechner/pi-tui",
+      target: join(globalNodeModules, "@mariozechner", "pi-coding-agent", "node_modules", "@mariozechner", "pi-tui"),
     },
   ];
 
   for (const { link, target } of links) {
-    if (!existsSync(link)) {
+    let currentTarget: string | null = null;
+    try {
+      currentTarget = readlinkSync(link);
+    } catch {}
+
+    if (currentTarget === target) {
+      continue;
+    }
+
+    if (currentTarget !== null) {
+      rmSync(link, { recursive: true, force: true });
+    }
+
+    try {
       symlinkSync(target, link);
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") {
+        throw error;
+      }
     }
   }
 
   return {
-    cleanup() {
-      for (const { link } of links.reverse()) {
-        if (existsSync(link)) {
-          rmSync(link, { recursive: true, force: true });
-        }
-      }
-    },
+    cleanup() {},
   };
 }
+
+test("transcript command headers truncate to the available width", async () => {
+  const links = ensureEditorModuleLinks();
+
+  try {
+    const { visibleWidth } = await import("@mariozechner/pi-tui");
+    const { renderTranscriptCommandHeader } = await import("../bash-mode/transcript-render.ts");
+    const rendered = renderTranscriptCommandHeader(8, "$ ", "printf hello world", " (ok)");
+
+    assert.equal(visibleWidth(rendered) <= 8, true);
+  } finally {
+    links.cleanup();
+  }
+});
 
 test("project history is stored newest-first and global zsh history parses histfile format", () => {
   const cwd = mkdtempSync(join(tmpdir(), "powerline-history-"));
@@ -128,6 +161,27 @@ test("one-off bash command context strips ! and !! prefixes", () => {
 
   assert.equal(getOneOffBashCommandContext("  !!git status"), null);
   assert.equal(getOneOffBashCommandContext("git status"), null);
+});
+
+test("bash editor ignores one-off shell context when bash mode is disabled", async () => {
+  const links = ensureEditorModuleLinks();
+
+  try {
+    const { BashModeEditor } = await import("../bash-mode/editor.ts");
+    const active = getMethod(BashModeEditor.prototype, "isShellCompletionContext").call({
+      optionsRef: {
+        isBashModeEnabled: () => false,
+        isBashModeActive: () => false,
+      },
+      isOneOffBashCommandContext() {
+        return true;
+      },
+    });
+
+    assert.equal(active, false);
+  } finally {
+    links.cleanup();
+  }
 });
 
 test("transcript store truncates oldest commands at command boundaries", () => {
@@ -626,7 +680,7 @@ test("bash editor does not submit pasted multiline input while bracketed paste i
 
   try {
     const { BashModeEditor } = await import("../bash-mode/editor.ts");
-    const { CustomEditor } = await import("/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/modes/interactive/components/custom-editor.js");
+    const { CustomEditor } = await import(getInstalledPiCodingAgentDistUrl("modes/interactive/components/custom-editor.js"));
 
     let delegated = 0;
     let submitted = 0;
@@ -674,7 +728,7 @@ test("bash editor refreshes shell ghost state after a bracketed paste completes"
 
   try {
     const { BashModeEditor } = await import("../bash-mode/editor.ts");
-    const { CustomEditor } = await import("/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/modes/interactive/components/custom-editor.js");
+    const { CustomEditor } = await import(getInstalledPiCodingAgentDistUrl("modes/interactive/components/custom-editor.js"));
 
     let delegated = 0;
     let scheduled = 0;
@@ -1084,7 +1138,7 @@ test("one-off bang submit does not accept ghost text before submitting", async (
 
   try {
     const { BashModeEditor } = await import("../bash-mode/editor.ts");
-    const { CustomEditor } = await import("/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/modes/interactive/components/custom-editor.js");
+    const { CustomEditor } = await import(getInstalledPiCodingAgentDistUrl("modes/interactive/components/custom-editor.js"));
 
     let delegated = 0;
     const superHandleInput = CustomEditor.prototype.handleInput;

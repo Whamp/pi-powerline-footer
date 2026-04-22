@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Bash-mode safety switch and transcript-width guard** — `bashMode.enabled` can now disable sticky bash mode entirely, preventing bash-mode command/shortcut registration and one-off shell completion takeover, and the embedded transcript now truncates command headers to the available width so narrow layouts do not crash the UI.
+
 ## [0.4.16] - 2026-04-21
 
 ### Fixed

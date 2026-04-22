@@ -129,12 +129,15 @@ In `~/.pi/agent/settings.json`:
 ```json
 {
   "bashMode": {
+    "enabled": true,
     "toggleShortcut": "ctrl+shift+b",
     "transcriptMaxLines": 2000,
     "transcriptMaxBytes": 524288
   }
 }
 ```
+
+Set `"bashMode": { "enabled": false }` to disable sticky bash mode entirely. That prevents `/bash-mode`, `/bash-reset`, the bash toggle shortcut, one-off bang-command shell completion, and the embedded transcript from taking over the editor.
 
 ## Editor Stash
 

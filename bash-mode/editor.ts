@@ -7,6 +7,7 @@ import type { GhostSuggestion } from "./types.ts";
 
 interface BashModeEditorOptions {
   keybindings: KeybindingsManager;
+  isBashModeEnabled?: () => boolean;
   isBashModeActive: () => boolean;
   isShellRunning: () => boolean;
   onExitBashMode: () => void;
@@ -195,10 +196,12 @@ export class BashModeEditor extends CustomEditor {
   }
 
   private isShellCompletionContext(): boolean {
+    if (this.optionsRef.isBashModeEnabled?.() === false) return false;
     return this.optionsRef.isBashModeActive() || this.isOneOffBashCommandContext();
   }
 
   private isOneOffBashCommandContext(): boolean {
+    if (this.optionsRef.isBashModeEnabled?.() === false) return false;
     return getOneOffBashCommandContext(this.getExpandedText()) !== null;
   }
 
